@@ -1,0 +1,419 @@
+---
+title: "rsa_model"
+format: html
+editor: visual
+---
+
+![]()
+
+```{r}
+
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(ggtext)
+library(latex2exp)
+```
+
+```{r}
+
+v_vals <- seq(-50, 50, length.out = 2001) 
+dv <- diff(v_vals)[1] 
+
+mu_vals <- seq(-30, 30, length.out = 201)
+trunc_mu_vals <- seq(-10, 10, length.out = 21)
+dMu <- diff(mu_vals)[1]
+
+sigma_vals <- seq(1, 5, length.out = 10)
+dSigma <- diff(sigma_vals)[1]
+```
+
+```{r, fig.width=7, fig.height=3}
+
+priors <- list(list(-8, 1), list(-6, 1.5), list(-2, 2), list(0, 3), list(2, 2), list(6, 1.5), list(8,1))
+df_priors <- do.call(rbind, lapply(priors, function(p)
+    data.frame(V = v_vals, P = dnorm(v_vals, p[[1]], p[[2]]), mu = factor(p[[1]]), sigma = factor(p[[2]]))
+)) %>% filter(V >-15 & V< 15)
+
+
+ggplot(df_priors, aes(x = V, y = P, color = mu, fill=mu)) +
+    geom_line(linewidth = 1) +
+    geom_area(alpha = 0.1, position = "identity") +
+    labs(x = "v", y = expression(pi(v))) +
+    theme_bw()
+```
+
+```{r}
+
+prior_L0 <- function(mu, sigma) {
+  dnorm(v_vals, mu, sigma) 
+}
+
+likelihood <- function(x) {
+  exp(0.5* x)
+}
+
+likelihood_L0 <- function(R) {
+  if(R == "null") rep(1, length(v_vals)) else likelihood(v_vals)
+}
+
+```
+
+```{r}
+
+evidential <- function(mu, sigma, R) {
+  prior <- prior_L0(mu, sigma)
+  likelihood <- likelihood_L0(R)
+  unnorm_posterior <- prior * likelihood
+  norm <- sum(unnorm_posterior) * dv
+  posterior <- unnorm_posterior / norm
+  data.frame(V = v_vals, 
+             Prior = prior, 
+             Posterior = posterior,
+             UnnormPosterior = unnorm_posterior,
+             mu = mu, 
+             sigma = sigma, 
+             R = R)
+}
+```
+
+```{r}
+priors <- list(list(-10, 3), list(0, 3), list(8, 3))
+
+figure1_data <- lapply(priors, function(prior) {
+    evidential(prior[[1]], prior[[2]], "long")
+  }) %>%
+  bind_rows() %>%
+  pivot_longer(cols = c("Prior", "Posterior"),
+               names_to = "Distribution",
+               values_to = "Prob")
+
+posterior_means <- figure1_data %>%
+  filter(Distribution == "Posterior") %>%
+  group_by(mu) %>%
+  summarise(post_mean = sum(V * Prob) * dv, .groups = "drop")
+
+ggplot(figure1_data,aes(x = V, y = Prob, fill = Distribution, color = Distribution)) +
+  geom_area(alpha = 0.1, position = "identity") +
+  geom_line(linewidth = 1) +
+  geom_vline(aes(xintercept = mu),
+             linetype = "dashed",
+             color = "gray50",
+             linewidth = 0.5) +
+  geom_vline(data = posterior_means,
+             aes(xintercept = post_mean),
+             linetype = "dashed",
+             color = "blue",
+             linewidth = 0.5) +
+ facet_wrap(
+  ~ mu,
+  labeller = as_labeller(
+    function(x) paste0("mu == ", x),
+    default = label_parsed
+  ),
+  ncol=1
+)+
+  scale_fill_manual(name = "Utterance", 
+                    values = c("Prior" = "gray50", "Posterior" = "blue"),
+                    labels = c("Prior" = "null (R=0)", "Posterior" = "long (R=4)")) +
+  scale_color_manual(name = "Utterance", 
+                     values = c("Prior" = "gray50", "Posterior" = "blue"),
+                     labels = c("Prior" = "null (R=0)", "Posterior" = "long (R=4)")) +
+  theme_bw() +
+  labs(
+    title = "Bayesian update with no pragmatic reasoning",
+    x = "v",
+    y = expression(paste(P[L[0]^list(mu, sigma)], "(v|R)"))
+  ) +
+  scale_x_continuous(limits = c(-18, 18)) +
+  theme(
+    axis.title.y = element_text(size = 16)
+  )
+
+```
+
+```{r, fig.width=7, fig.height=3}
+
+evid_data <- evidential(5, 2, "long")
+
+mean_vline <- data.frame(
+  Distribution = c("OriginalPrior", "InferredPrior", "Posterior"),
+  mean = c(5,                                          
+           5,                                    
+           sum(v_vals * evid_data$Posterior * dv))      
+)
+
+evid_data <- evid_data %>%
+  mutate(OriginalPrior = Prior, InferredPrior = Prior) %>%
+  pivot_longer(cols = c("OriginalPrior", "InferredPrior", "Posterior"),
+               names_to = "Distribution",
+                 values_to = "Prob") %>%
+  filter(V>-10, V<10) 
+
+labels_evid <- c(
+  "OriginalPrior" = TeX("Original Prior: $p_{L_0^\\pi}(v)=\\pi(v)$"),
+  "InferredPrior" = TeX("Inferred Prior: $p_{L_0^\\pi}(v)=\\pi(v)$"),
+  "Posterior"     = TeX("Posterior: $p_{L_0^\\pi}(v|u=R)$")
+)
+
+ggplot(evid_data, aes(x = V, y = Prob, fill = Distribution, color = Distribution, linetype = Distribution, group=Distribution)) +
+  geom_area(alpha = 0.1, position = "identity") +
+  geom_line(linewidth = 1.5) +
+  scale_linetype_manual(
+    values = c("OriginalPrior" = "dashed", "InferredPrior" = "solid", "Posterior" = "solid"),
+    labels = labels_evid) +
+  theme_bw() +
+  geom_vline(data = mean_vline, aes(xintercept = mean, color = Distribution),
+             linewidth = 0.8, linetype = "dashed") +
+  geom_vline(aes(xintercept = 5), color = "#619CFF",
+           linewidth = 1.2, linetype = "dashed") +
+  geom_vline(aes(xintercept = 5), color = "#F8766D",
+           linewidth = 1.2, linetype = "dotted") +
+  scale_color_manual(
+    values = c("OriginalPrior" = "#619CFF", "InferredPrior" = "#F8766D", "Posterior" =  "#00BA38"),
+    labels = labels_evid) +
+scale_fill_manual(
+  values = c("OriginalPrior" = "#619CFF", "InferredPrior" = "#F8766D", "Posterior" =  "#00BA38"),
+  labels = labels_evid) +
+  labs(x = "v", y = "Probability density") +
+  theme(legend.position = c(0.2, 0.75))
+```
+
+```{r}
+
+L0_array_null <- array(
+  vapply(seq_along(sigma_vals), function(k)
+    vapply(seq_along(mu_vals), function(j)
+      evidential(mu_vals[j], sigma_vals[k], "null")$Posterior,
+      numeric(length(v_vals))),
+    numeric(length(v_vals) * length(mu_vals))),
+  dim = c(length(v_vals), length(mu_vals), length(sigma_vals))
+)
+
+L0_array_long <- array(
+  vapply(seq_along(sigma_vals), function(k)
+    vapply(seq_along(mu_vals), function(j)
+      evidential(mu_vals[j], sigma_vals[k], "long")$Posterior,
+      numeric(length(v_vals))),
+    numeric(length(v_vals) * length(mu_vals))),
+  dim = c(length(v_vals), length(mu_vals), length(sigma_vals))
+)
+```
+
+```{r}
+
+theta_vals <- seq(0, 5, length.out = 6)
+dTheta <- diff(theta_vals)[1]
+cost <- c(null = 0, long = 1.5) 
+alpha = 1
+
+speaker_grid <- expand.grid(
+  theta_i = 1:length(theta_vals),
+  mu_j = 1:length(mu_vals),
+  sigma_k = 1:length(sigma_vals)
+)
+speaker_grid$theta <- theta_vals[speaker_grid$theta_i]
+speaker_grid$mu <- mu_vals[speaker_grid$mu_j]
+speaker_grid$sigma <- sigma_vals[speaker_grid$sigma_k]
+
+s_probs <- mapply(function(i, j, k) {
+  
+  #surprisal
+  surprisal_null <- -log(sum(L0_array_null[v_vals > theta_vals[i], j, k]) * dv)
+  surprisal_long <- -log(sum(L0_array_long[v_vals > theta_vals[i], j, k]) * dv)
+  
+  #informativity
+  inf_null <- -surprisal_null
+  inf_long <- -surprisal_long
+  
+  #utility
+  util_null <- inf_null - cost["null"]
+  util_long <- inf_long - cost["long"]
+  
+  #softmax
+  null_numer <- exp(alpha * util_null)
+  long_numer <- exp(alpha * util_long)
+  denom <- null_numer + long_numer
+  prob_null <- null_numer/denom
+  prob_long <- long_numer/denom
+  
+  c(surprisal_null, surprisal_long, util_null, util_long, prob_null, prob_long)
+}, speaker_grid$theta_i, speaker_grid$mu_j, speaker_grid$sigma_k)
+
+speaker_grid$surprisal_null <- s_probs[1,]
+speaker_grid$surprisal_long <- s_probs[2,]
+speaker_grid$util_null <- s_probs[3,]
+speaker_grid$util_long <- s_probs[4,]
+speaker_grid$prob_null <- s_probs[5,]
+speaker_grid$prob_long <- s_probs[6,]
+```
+
+```{r}
+
+speaker_heatmap <- speaker_grid %>%
+  mutate(surprisal_diff = surprisal_long - surprisal_null) %>%
+  mutate(util_diff = util_long - util_null) %>%
+  mutate(prob_diff = prob_long - prob_null) %>%
+  filter(theta == 5) %>%
+  filter(mu>-10, mu<10)
+
+ggplot(speaker_heatmap, aes(x = mu, y = sigma, fill = surprisal_diff)) +
+  geom_tile() +
+  scale_fill_gradient2(
+    high = "red", mid = "white", low = "blue", midpoint = 0,
+    breaks = c(min(speaker_heatmap$surprisal_diff), 0, max(speaker_heatmap$surprisal_diff)),
+    labels = c(expression(paste(Delta, " surprisal ->", infinity)), "", expression(paste(Delta, " surprisal = 0")))
+  ) +
+  labs(
+    title = expression(paste(L[0]^list(mu, sigma), " post-utterance surprisal difference (long-null)")),
+    subtitle = "How much do the reasons reduce the listener's surprisal?",
+    x = expression(mu), y = expression(sigma), fill = ""
+  ) +
+  theme_bw()
+```
+
+```{r}
+
+ggplot(speaker_heatmap, aes(x = mu, y = sigma, fill = util_diff)) +
+  geom_raster() +
+  scale_fill_gradient2(
+    high = "blue", mid = "white", low = "red", midpoint = 0,
+    breaks = c(min(speaker_heatmap$util_diff), 0, max(speaker_heatmap$util_diff)),
+    labels = c("Prefers none", "", "Prefers reasons")
+  ) +
+  labs(
+    x = expression(mu), y = expression(sigma), fill = ""
+  ) +
+  theme_bw()
+```
+
+```{r}
+
+joint_grid <- speaker_grid
+
+hyperprior_mu <- dnorm(mu_vals, 5, 10)
+hyperprior_mu <- hyperprior_mu / (sum(hyperprior_mu) * dMu)
+p_mu <- hyperprior_mu[joint_grid$mu_j]
+
+
+hyperprior_sigma = rep(1, length(sigma_vals))
+hyperprior_sigma <- hyperprior_sigma/ (sum(hyperprior_sigma) * dSigma)
+p_sigma <- hyperprior_sigma[joint_grid$sigma_k]
+
+
+prior_theta <- dnorm(theta_vals, 2, 2) 
+prior_theta <- prior_theta/ (sum(prior_theta) * dTheta)
+p_theta <- prior_theta[joint_grid$theta_i]
+
+joint_grid <- joint_grid %>%
+  mutate(joint_null = prob_null * p_theta * p_mu * p_sigma,
+         joint_long = prob_long * p_theta * p_mu * p_sigma) %>%
+  mutate(joint_null_norm = joint_null / (sum(joint_null) * dTheta * dMu * dSigma),
+          joint_long_norm = joint_long / (sum(joint_long) * dTheta * dMu * dSigma))
+
+marginal_grid <- joint_grid %>%
+    group_by(mu_j, mu, sigma_k, sigma) %>%
+    summarise(
+      marg_null = sum(joint_null_norm) * dTheta,
+      marg_long = sum(joint_long_norm) * dTheta,
+      .groups = "drop"
+    ) %>% arrange(sigma_k, mu_j)
+  
+```
+
+```{r}
+L1_prior_heatmap <- marginal_grid %>%
+  filter(mu>-10 & mu<10)
+
+ggplot(L1_prior_heatmap, aes(x = mu, y = sigma, fill = marg_null)) +
+  geom_tile() +
+  scale_fill_gradient(
+    low = "white", high = "blue", limits = c(min(L1_prior_heatmap$marg_null), max(L1_prior_heatmap$marg_null)),
+    name = expression(paste(P[L[1]], "(" , pi[list(mu, sigma)], "|R=null)")),
+    labels = scales::scientific
+  ) +
+  labs(
+    title = "Pragmatic listener inferred prior from null utterance",
+    x = expression(mu), y = expression(sigma), fill = ""
+  ) +
+  theme_bw()
+
+ggplot(L1_prior_heatmap, aes(x = mu, y = sigma, fill = marg_long)) +
+  geom_tile() +
+  scale_fill_gradient(
+    low = "white", high = "blue", limits = c(min(L1_prior_heatmap$marg_long), max(L1_prior_heatmap$marg_long)),
+    name = expression(paste(P[L[1]], "(" , pi, "|u=R)")),
+    labels = scales::scientific
+  ) +
+  labs(
+    title = "Pragmatic listener inferred prior from u=R",
+    x = expression(mu), y = expression(sigma), fill = ""
+  ) +
+  theme_bw()
+```
+
+```{r}
+
+inferred_priors <- marginal_grid %>% 
+  pivot_longer(cols = c(marg_null, marg_long),
+               names_to = "Utterance",
+               values_to = "Prob") %>%
+  group_by(Utterance) %>%
+  summarise(
+    avg_mu    = weighted.mean(mu, Prob),
+    avg_sigma = weighted.mean(sigma, Prob)
+  )
+
+null_mu    <- inferred_priors$avg_mu[inferred_priors$Utterance == "marg_null"]
+null_sigma <- inferred_priors$avg_sigma[inferred_priors$Utterance == "marg_null"]
+long_mu    <- inferred_priors$avg_mu[inferred_priors$Utterance == "marg_long"]
+long_sigma <- inferred_priors$avg_sigma[inferred_priors$Utterance == "marg_long"]
+```
+
+```{r, fig.width=7, fig.height=3}
+posterior <- evidential(long_mu, long_sigma, "long")$Posterior
+
+prag_data <- data.frame(
+  v = v_vals,
+  OriginalPrior = dnorm(v_vals, 5,2),
+  InferredPrior = dnorm(v_vals, long_mu, long_sigma),
+  Posterior = posterior
+) %>%
+pivot_longer(cols = c("OriginalPrior", "InferredPrior", "Posterior"),
+               names_to = "Distribution",
+                 values_to = "Prob")
+
+mean_vline <- data.frame(
+  Distribution = c("OriginalPrior", "InferredPrior", "Posterior"),
+  mean = c(5,                                          
+           long_mu,                                    
+           sum(v_vals * posterior * dv))      
+)
+
+prag_data <- prag_data %>% filter(v<10, v>-10)
+
+labels_prag <- c(
+  "OriginalPrior" = TeX("Original Prior: $p_{L_1}(v)$"),
+  "InferredPrior" = TeX("Inferred Prior: $\\pi(v)$"),
+  "Posterior"     = TeX("Posterior: $p_{L_1}(v|u=R)$")
+)
+
+
+ggplot(prag_data, aes(x = v, y = Prob, fill = Distribution, color = Distribution, linetype = Distribution, group=Distribution)) +
+  geom_area(alpha = 0.1, position = "identity") +
+  geom_line(linewidth = 1.5) +
+  scale_linetype_manual(
+    values = c("OriginalPrior" = "solid", "InferredPrior" = "solid", "Posterior" = "solid"),
+    labels = labels_prag) +
+  theme_bw() +
+  geom_vline(data = mean_vline, aes(xintercept = mean, color = Distribution),
+             linewidth = 0.8, linetype = "dashed") +
+  scale_color_manual(
+    values = c("OriginalPrior" = "#619CFF", "InferredPrior" = "#F8766D", "Posterior" =  "#00BA38"), 
+    labels = labels_prag) +
+  scale_fill_manual(
+      values = c("OriginalPrior" = "#619CFF", "InferredPrior" = "#F8766D", "Posterior" =  "#00BA38"),
+      labels = labels_prag) +
+  labs(x = "v", y = "Probability density") +
+  theme(legend.position = c(0.15, 0.75))
+```
